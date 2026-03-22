@@ -1,0 +1,12 @@
+[{
+  "_id": {
+    "$oid": "6960a4ab4a446577e7b8ac97"
+  },
+  "student_number": 202310017,
+  "year": "1",
+  "section": "A",
+  "status": "Enrolled",
+  "first_name": "Jerry",
+  "last_name": "Corazon",
+  "semester": "1st"
+}]
