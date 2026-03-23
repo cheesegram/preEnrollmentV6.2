@@ -243,6 +243,10 @@ function normalizeImportedStudent(raw = {}) {
 export async function importStudents(req, res) {
   try {
     const rows = Array.isArray(req.body?.students) ? req.body.students : [];
+    const importType = String(req.body?.importType ?? "student").toLowerCase(); // "student" or "section"
+    
+    console.log(`[Import] Starting ${importType} import with ${rows.length} rows`);
+    
     if (!rows.length) {
       return res.status(400).json({ message: "students array is required" });
     }
@@ -255,7 +259,69 @@ export async function importStudents(req, res) {
       return res.status(400).json({ message: "No valid student rows found" });
     }
 
-    const operations = normalized.map((student) => ({
+    console.log(`[Import] Normalized to ${normalized.length} valid students`);
+    console.log(`[Import] Student numbers to check:`, normalized.map((s) => s.student_number));
+
+    // Get all existing students with these student numbers
+    const existingStudents = await Student.find(
+      { student_number: { $in: normalized.map((s) => String(s.student_number).trim()) } },
+      { student_number: 1, first_name: 1, last_name: 1 }
+    ).lean();
+
+    console.log(`[Import] Found ${existingStudents.length} existing students in database`);
+    console.log(`[Import] Existing student numbers:`, existingStudents.map((s) => s.student_number));
+
+    // Create a set with normalized (string) student numbers for comparison
+    const existingStudentNumbers = new Set(
+      existingStudents.map((s) => String(s.student_number).trim())
+    );
+
+    // For "student" import type: block entire import if any student exists
+    if (importType === "student") {
+      const duplicates = normalized.filter((s) => 
+        existingStudentNumbers.has(String(s.student_number).trim())
+      );
+      
+      console.log(`[Import] Student import - found ${duplicates.length} duplicates`);
+      
+      if (duplicates.length > 0) {
+        console.log(`[Import] Blocking student import due to duplicates`);
+        return res.status(409).json({
+          message: "Import Blocked: Student Number Already Exist",
+          blockReason: "student_exists",
+          duplicates: duplicates.map((s) => ({
+            student_number: s.student_number,
+            first_name: s.first_name,
+            last_name: s.last_name,
+          })),
+        });
+      }
+    }
+
+    // For "section" import type: skip existing students but import the rest
+    const toImport = normalized.filter((s) => 
+      !existingStudentNumbers.has(String(s.student_number).trim())
+    );
+    const blocked = normalized.filter((s) => 
+      existingStudentNumbers.has(String(s.student_number).trim())
+    );
+
+    console.log(`[Import] Section import - ${toImport.length} to import, ${blocked.length} blocked`);
+
+    if (importType === "section" && blocked.length > 0 && toImport.length === 0) {
+      console.log(`[Import] Blocking section import - all students exist`);
+      return res.status(409).json({
+        message: "Import Blocked: All students in this section already exist",
+        blockReason: "all_students_exist",
+        blocked: blocked.map((s) => ({
+          student_number: s.student_number,
+          first_name: s.first_name,
+          last_name: s.last_name,
+        })),
+      });
+    }
+
+    const operations = toImport.map((student) => ({
       updateOne: {
         filter: { student_number: student.student_number },
         update: { $set: student },
@@ -263,12 +329,21 @@ export async function importStudents(req, res) {
       },
     }));
 
-    const result = await Student.bulkWrite(operations, { ordered: false });
+    let result = { upsertedCount: 0, modifiedCount: 0, matchedCount: 0 };
+    if (operations.length > 0) {
+      result = await Student.bulkWrite(operations, { ordered: false });
+      console.log(`[Import] Bulk write result - upserted: ${result.upsertedCount}, modified: ${result.modifiedCount}`);
+    }
 
     res.status(200).json({
       message: "Students imported successfully",
       received: rows.length,
-      imported: normalized.length,
+      imported: toImport.length,
+      blocked: blocked.map((s) => ({
+        student_number: s.student_number,
+        first_name: s.first_name,
+        last_name: s.last_name,
+      })),
       upserted: result.upsertedCount ?? 0,
       modified: result.modifiedCount ?? 0,
       matched: result.matchedCount ?? 0,

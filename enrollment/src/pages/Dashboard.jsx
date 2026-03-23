@@ -399,14 +399,75 @@ function Dashboard() {
         try {
             setIsImporting(true);
             const parsedStudents = await parseStudentTemplateFile(file);
-            const response = await api.post("/students/import", { students: parsedStudents });
+            
+            // Determine import type based on filename
+            const fileName = String(file.name ?? "").toLowerCase();
+            const importType = fileName.includes("section") ? "section" : "student";
+            
+            console.log(`[Frontend] Importing ${importType} type with ${parsedStudents.length} students from ${file.name}`);
+            
+            const response = await api.post("/students/import", { 
+                students: parsedStudents,
+                importType: importType
+            });
+            
+            console.log(`[Frontend] Import response:`, response.data);
             await fetchStudents();
-            toast.success(
-                `Imported ${response?.data?.imported ?? parsedStudents.length} student records`
-            );
+            
+            // Show import results
+            const imported = response?.data?.imported ?? 0;
+            const blocked = response?.data?.blocked ?? [];
+            
+            console.log(`[Frontend] Import completed - imported: ${imported}, blocked: ${blocked.length}`);
+            
+            if (blocked.length > 0 && importType === "section") {
+                // For section imports, show each blocked student
+                blocked.forEach((student) => {
+                    const name = `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim();
+                    console.log(`[Frontend] Showing error for blocked student: ${name}`);
+                    toast.error(`Import Blocked: ${name}, Student Number Already Exist`);
+                });
+                if (imported > 0) {
+                    toast.success(`Imported ${imported} student records from section`);
+                }
+            } else {
+                toast.success(
+                    `Imported ${imported} student records`
+                );
+            }
         } catch (error) {
-            console.error("Import failed", error);
-            toast.error(error?.response?.data?.message || error?.message || "Failed to import file");
+            console.error("[Frontend] Import failed", error);
+            console.error("[Frontend] Error response:", error?.response?.data);
+            
+            const blockReason = error?.response?.data?.blockReason;
+            const message = error?.response?.data?.message;
+            const responseStatus = error?.response?.status;
+            
+            console.log(`[Frontend] blockReason: ${blockReason}, status: ${responseStatus}`);
+            
+            // Handle 409 Conflict errors (blocked imports)
+            if (responseStatus === 409) {
+                if (blockReason === "student_exists") {
+                    // For student imports, show the blocking error
+                    console.log(`[Frontend] Student import blocked - showing error`);
+                    toast.error("Import Blocked: Student Number Already Exist");
+                } else if (blockReason === "all_students_exist") {
+                    // For section imports where all students exist
+                    const blocked = error?.response?.data?.blocked ?? [];
+                    if (blocked.length > 0) {
+                        blocked.forEach((student) => {
+                            const name = `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim();
+                            console.log(`[Frontend] Showing error for blocked student: ${name}`);
+                            toast.error(`Import Blocked: ${name}, Student Number Already Exist`);
+                        });
+                    } else {
+                        toast.error(message || "All students in this section already exist");
+                    }
+                }
+            } else {
+                // Handle other errors
+                toast.error(message || error?.message || "Failed to import file");
+            }
         } finally {
             setIsImporting(false);
             event.target.value = "";
