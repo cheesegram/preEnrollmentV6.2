@@ -7,6 +7,8 @@ import api from "../lib/axios";
 import toast from "react-hot-toast";
 import * as XLSX from "xlsx";
 
+//wowzers
+
 const STUDENT_HEADERS = [
     "STUDENT NUMBER",
     "FIRST NAME",
@@ -16,6 +18,9 @@ const STUDENT_HEADERS = [
     "SEMESTER",
     "STATUS",
 ];
+
+const IMPORT_NOTIFICATION_STORAGE_KEY = "dashboardImportNotificationLog";
+const IMPORT_NOTIFICATION_UNREAD_KEY = "dashboardImportNotificationUnreadCount";
 
 const normalizeHeader = (value) =>
     String(value ?? "")
@@ -178,7 +183,59 @@ function Dashboard() {
     const [sectionYearInput, setSectionYearInput] = useState("1");
     const [sectionSemesterInput, setSectionSemesterInput] = useState("1st");
     const [isCreatingSection, setIsCreatingSection] = useState(false);
+    const [importLogOpen, setImportLogOpen] = useState(false);
+    const [importNotifications, setImportNotifications] = useState(() => {
+        try {
+            const raw = window.localStorage.getItem(IMPORT_NOTIFICATION_STORAGE_KEY);
+            const parsed = JSON.parse(raw ?? "[]");
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    });
+    const [unreadImportNotifications, setUnreadImportNotifications] = useState(() => {
+        try {
+            const raw = window.localStorage.getItem(IMPORT_NOTIFICATION_UNREAD_KEY);
+            const parsed = Number(raw ?? 0);
+            return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+        } catch {
+            return 0;
+        }
+    });
     const importInputRef = useRef(null);
+
+    const pushImportNotification = (message, type = "info") => {
+        const entry = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            message: String(message ?? ""),
+            type,
+            createdAt: new Date().toISOString(),
+        };
+
+        setImportNotifications((prev) => {
+            const next = [entry, ...prev].slice(0, 200);
+            window.localStorage.setItem(IMPORT_NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+            return next;
+        });
+        setUnreadImportNotifications((prev) => {
+            const nextUnread = prev + 1;
+            window.localStorage.setItem(IMPORT_NOTIFICATION_UNREAD_KEY, String(nextUnread));
+            return nextUnread;
+        });
+    };
+
+    const clearImportNotifications = () => {
+        setImportNotifications([]);
+        setUnreadImportNotifications(0);
+        window.localStorage.removeItem(IMPORT_NOTIFICATION_STORAGE_KEY);
+        window.localStorage.setItem(IMPORT_NOTIFICATION_UNREAD_KEY, "0");
+    };
+
+    const openImportLog = () => {
+        setImportLogOpen(true);
+        setUnreadImportNotifications(0);
+        window.localStorage.setItem(IMPORT_NOTIFICATION_UNREAD_KEY, "0");
+    };
 
     const isNewStudent = (student) => String(student.year) === "1" && student.status !== "Pending";
 
@@ -424,16 +481,42 @@ function Dashboard() {
                 // For section imports, show each blocked student
                 blocked.forEach((student) => {
                     const name = `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim();
+                    const studentNumber = String(student.student_number ?? "").trim();
                     console.log(`[Frontend] Showing error for blocked student: ${name}`);
-                    toast.error(`Import Blocked: ${name}, Student Number Already Exist`);
+                    const msg = `${studentNumber} - ${name} : Student number already exist in the database`;
+                    toast.error(msg);
+                    pushImportNotification(msg, "error");
                 });
                 if (imported > 0) {
-                    toast.success(`Imported ${imported} student records from section`);
+                    const blockedNumbers = new Set(
+                        blocked.map((student) => String(student.student_number ?? "").trim())
+                    );
+                    const importedStudents = parsedStudents.filter(
+                        (student) => !blockedNumbers.has(String(student.student_number ?? "").trim())
+                    );
+
+                    importedStudents.forEach((student) => {
+                        const studentNumber = String(student.student_number ?? "").trim();
+                        const name = `${String(student.first_name ?? "").trim()} ${String(student.last_name ?? "").trim()}`.trim();
+                        const detailMsg = `${studentNumber} - ${name} : Imported successfully`;
+                        pushImportNotification(detailMsg, "success");
+                    });
+
+                    const msg = `Imported ${imported} student records from section`;
+                    toast.success(msg);
                 }
             } else {
+                const msg = `Imported ${imported} student records`;
                 toast.success(
-                    `Imported ${imported} student records`
+                    msg
                 );
+
+                parsedStudents.forEach((student) => {
+                    const studentNumber = String(student.student_number ?? "").trim();
+                    const name = `${String(student.first_name ?? "").trim()} ${String(student.last_name ?? "").trim()}`.trim();
+                    const detailMsg = `${studentNumber} - ${name} : Imported successfully`;
+                    pushImportNotification(detailMsg, "success");
+                });
             }
         } catch (error) {
             console.error("[Frontend] Import failed", error);
@@ -450,23 +533,43 @@ function Dashboard() {
                 if (blockReason === "student_exists") {
                     // For student imports, show the blocking error
                     console.log(`[Frontend] Student import blocked - showing error`);
-                    toast.error("Import Blocked: Student Number Already Exist");
+                    const duplicates = error?.response?.data?.duplicates ?? [];
+                    if (duplicates.length > 0) {
+                        duplicates.forEach((student) => {
+                            const studentNumber = String(student.student_number ?? "").trim();
+                            const name = `${String(student.first_name ?? "").trim()} ${String(student.last_name ?? "").trim()}`.trim();
+                            const msg = `${studentNumber} - ${name} : Student number already exist in the database`;
+                            toast.error(msg);
+                            pushImportNotification(msg, "error");
+                        });
+                    } else {
+                        const msg = "Import Blocked: Student Number Already Exist";
+                        toast.error(msg);
+                        pushImportNotification(msg, "error");
+                    }
                 } else if (blockReason === "all_students_exist") {
                     // For section imports where all students exist
                     const blocked = error?.response?.data?.blocked ?? [];
                     if (blocked.length > 0) {
                         blocked.forEach((student) => {
                             const name = `${student.first_name ?? ""} ${student.last_name ?? ""}`.trim();
+                            const studentNumber = String(student.student_number ?? "").trim();
                             console.log(`[Frontend] Showing error for blocked student: ${name}`);
-                            toast.error(`Import Blocked: ${name}, Student Number Already Exist`);
+                            const msg = `${studentNumber} - ${name} : Student number already exist in the database`;
+                            toast.error(msg);
+                            pushImportNotification(msg, "error");
                         });
                     } else {
-                        toast.error(message || "All students in this section already exist");
+                        const msg = message || "All students in this section already exist";
+                        toast.error(msg);
+                        pushImportNotification(msg, "error");
                     }
                 }
             } else {
                 // Handle other errors
-                toast.error(message || error?.message || "Failed to import file");
+                const msg = message || error?.message || "Failed to import file";
+                toast.error(msg);
+                pushImportNotification(msg, "error");
             }
         } finally {
             setIsImporting(false);
@@ -578,9 +681,25 @@ function Dashboard() {
 
                 <section className="p-4 sm:p-6 md:p-8 flex flex-col gap-8 relative z-10 w-full max-w-[1600px] mx-auto flex-1">
 
-                    <div className="flex flex-col gap-1">
-                        <h1 className="text-2xl font-bold text-gray-800">Student Summary</h1>
-                        <p className="text-sm text-gray-500">Overview of current student enrollment status.</p>
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col gap-1">
+                            <h1 className="text-2xl font-bold text-gray-800">Student Summary</h1>
+                            <p className="text-sm text-gray-500">Overview of current student enrollment status.</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={openImportLog}
+                            className="relative h-10 w-10 rounded-full border border-gray-200 bg-white/90 text-gray-700 hover:text-[#2E522A] hover:border-gray-300 transition-colors"
+                            aria-label="Open import notification log"
+                            title="Import notification log"
+                        >
+                            <i className="fa-solid fa-bell text-sm"></i>
+                            {unreadImportNotifications > 0 && (
+                                <span className="absolute -top-1 -right-1 h-5 min-w-[1.25rem] px-1 rounded-full bg-red-600 text-white text-[10px] leading-5 font-bold">
+                                    {Math.min(unreadImportNotifications, 99)}
+                                </span>
+                            )}
+                        </button>
                     </div>
 
                     <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -733,6 +852,56 @@ function Dashboard() {
                     <div className="overflow-y-auto rounded-xl border border-gray-200 flex-1 bg-white">
                         <StudentsTable students={modalStudents} isPendingView={modalTitle === "Pending Students"} />
                     </div>
+                </div>
+            </Modal>
+
+            <Modal open={importLogOpen} onClose={() => setImportLogOpen(false)} title="Import Notifications">
+                <div className="flex flex-col gap-3 max-h-[70vh] min-h-[18rem]">
+                    <div className="flex items-center justify-end">
+                        <button
+                            type="button"
+                            onClick={clearImportNotifications}
+                            disabled={!importNotifications.length}
+                            className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Clear Log
+                        </button>
+                    </div>
+                    {importNotifications.length ? (
+                        <div className="overflow-y-auto rounded-xl border border-gray-200 bg-white">
+                            <ul className="divide-y divide-gray-100">
+                                {[...importNotifications].reverse().map((item) => {
+                                    const when = new Date(item.createdAt);
+                                    const timeLabel = Number.isNaN(when.getTime())
+                                        ? "Unknown time"
+                                        : when.toLocaleString("en-US", {
+                                            month: "short",
+                                            day: "numeric",
+                                            year: "numeric",
+                                            hour: "numeric",
+                                            minute: "2-digit",
+                                        });
+                                    const toneClass = item.type === "error"
+                                        ? "border-red-200 bg-red-50 text-red-700"
+                                        : "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+                                    return (
+                                        <li key={item.id} className="p-3 sm:p-4">
+                                            <div className={`rounded-lg border px-3 py-2 text-xs font-semibold uppercase tracking-wide w-fit ${toneClass}`}>
+                                                {item.type === "error" ? "Blocked/Error" : "Success"}
+                                            </div>
+                                            <p className="mt-2 text-sm text-gray-800 leading-relaxed">{item.message}</p>
+                                            <p className="mt-1 text-xs text-gray-500">{timeLabel}</p>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                    ) : (
+                        <div className="flex-1 rounded-xl border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center p-6 text-sm text-gray-500 text-center">
+                            No import notifications yet.
+                        </div>
+                    )}
                 </div>
             </Modal>
 

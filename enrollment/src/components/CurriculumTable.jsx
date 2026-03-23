@@ -18,6 +18,7 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
   const [irregularCurriculumLoading, setIrregularCurriculumLoading] = useState(false);
   const [showIrregularModal, setShowIrregularModal] = useState(false);
   const [showIrregularExportModal, setShowIrregularExportModal] = useState(false);
+  const [studentsWithCurriculum, setStudentsWithCurriculum] = useState(new Set());
 
   const yearKeys = useMemo(
     () => ["1st", "2nd", "3rd", "4th", "irregular"],
@@ -93,11 +94,34 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
             t: Date.now(),
           },
         });
-        setIrregularStudents(Array.isArray(res.data) ? res.data : []);
+        const students = Array.isArray(res.data) ? res.data : [];
+        setIrregularStudents(students);
+
+        // Fetch curriculum status for each irregular student
+        const withCurriculum = new Set();
+        for (const student of students) {
+          const studentNumber = String(student.student_number ?? "").trim();
+          if (!studentNumber) continue;
+          
+          try {
+            const currRes = await api.get(
+              `/curriculum/doc/${encodeURIComponent(studentNumber)}`,
+              { params: { t: Date.now() } }
+            );
+            if (currRes.data) {
+              withCurriculum.add(studentNumber);
+            }
+          } catch (error) {
+            // If 404 or error, student doesn't have curriculum
+            // Continue without adding to the set
+          }
+        }
+        setStudentsWithCurriculum(withCurriculum);
       } catch (error) {
         console.error("Error fetching irregular students", error);
         toast.error("Failed to load irregular students");
         setIrregularStudents([]);
+        setStudentsWithCurriculum(new Set());
       } finally {
         setIrregularLoading(false);
       }
@@ -260,6 +284,8 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
 
       if (postRes?.data?.data) {
         setSelectedIrregularCurriculum(postRes.data.data);
+        // Add to students with curriculum set
+        setStudentsWithCurriculum((prev) => new Set([...prev, docId]));
       }
 
       const replacedId = postRes?.data?.replacedDocumentId || docId;
@@ -445,16 +471,23 @@ export default function CurriculumTable({ onRegularImportSuccess }) {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {irregularFilteredStudents.length ? (
-                    irregularFilteredStudents.map((student) => (
-                      <tr
-                        key={student._id || student.student_number}
-                        onClick={() => openIrregularStudent(student)}
-                        className="cursor-pointer hover:bg-gray-50/80 transition-colors"
-                      >
-                        <td className="px-4 py-3 text-gray-800 font-medium">{student.student_number}</td>
-                        <td className="px-4 py-3 text-gray-700">{`${student.first_name ?? ""} ${student.last_name ?? ""}`.trim()}</td>
-                      </tr>
-                    ))
+                    irregularFilteredStudents.map((student) => {
+                      const hasCurriculum = studentsWithCurriculum.has(String(student.student_number ?? "").trim());
+                      const rowClasses = hasCurriculum
+                        ? "cursor-pointer hover:bg-gray-50/80 transition-colors"
+                        : "cursor-pointer hover:bg-red-50/80 transition-colors bg-red-50 border-l-4 border-l-red-500";
+                      
+                      return (
+                        <tr
+                          key={student._id || student.student_number}
+                          onClick={() => openIrregularStudent(student)}
+                          className={rowClasses}
+                        >
+                          <td className="px-4 py-3 text-gray-800 font-medium">{student.student_number}</td>
+                          <td className="px-4 py-3 text-gray-700">{`${student.first_name ?? ""} ${student.last_name ?? ""}`.trim()}</td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td colSpan={2} className="px-4 py-10 text-center text-gray-500">No irregular students found.</td>
