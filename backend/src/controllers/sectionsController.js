@@ -225,3 +225,31 @@ export async function getSectionsMeta(req, res) {
     res.status(500).json({ message: "Internal server error" });
   }
 }
+
+export async function deleteSectionById(req, res) {
+  try {
+    const section = await Section.findById(req.params.id).lean();
+    if (!section) {
+      return res.status(404).json({ message: "Section not found" });
+    }
+
+    const enrolledExists = await Student.exists({
+      year: String(section.year ?? "").trim(),
+      section: String(section.section ?? "").trim(),
+      semester: String(section.semester ?? "").trim(),
+      status: "Enrolled",
+    });
+
+    if (enrolledExists) {
+      return res.status(409).json({
+        message: "Cannot delete section with enrolled students",
+      });
+    }
+
+    await Section.findByIdAndDelete(req.params.id);
+    return res.status(200).json({ message: "Section deleted successfully" });
+  } catch (error) {
+    console.error("Error in deleteSectionById controller", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}

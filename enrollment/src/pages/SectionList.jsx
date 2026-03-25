@@ -11,6 +11,7 @@ function SectionList() {
     const [irregularMax, setIrregularMax] = useState(0);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState("");
+    const [deleteMode, setDeleteMode] = useState(false);
 
     const displayedSections = useMemo(() => {
         let result = sections;
@@ -59,44 +60,40 @@ function SectionList() {
         return result;
     }, [sections, query, selected]);
 
+    const refreshSections = async ({ withLoading = false } = {}) => {
+        try {
+            if (withLoading) setLoading(true);
+            await api.post("/sections/sync");
+            const [sectionsRes, metaRes] = await Promise.all([
+                api.get("/sections", { params: { t: Date.now() } }),
+                api.get("/sections/meta", { params: { t: Date.now() } }),
+            ]);
+            const rawSections = Array.isArray(sectionsRes.data) ? sectionsRes.data : [];
+            const normalized = rawSections.map((s) => ({
+                ...s,
+                total: Number(s.regular || 0) + Number(s.irregular || 0),
+            }));
+            setSections(normalized);
+            setIrregularMax(Number(metaRes?.data?.irregularTotal || 0));
+        } catch (e) {
+            console.error("Failed to load sections", e);
+        } finally {
+            if (withLoading) setLoading(false);
+        }
+    };
+
     useEffect(() => {
-        const fetchSections = async () => {
-            try {
-                setLoading(true);
-                await api.post("/sections/sync");
-                const [sectionsRes, metaRes] = await Promise.all([
-                    api.get("/sections", { params: { t: Date.now() } }),
-                    api.get("/sections/meta", { params: { t: Date.now() } }),
-                ]);
-                const rawSections = Array.isArray(sectionsRes.data) ? sectionsRes.data : [];
-                const normalized = rawSections.map((s) => ({
-                    ...s,
-                    total: Number(s.regular || 0) + Number(s.irregular || 0),
-                }));
-                setSections(normalized);
-                setIrregularMax(Number(metaRes?.data?.irregularTotal || 0));
-            } catch (e) {
-                console.error("Failed to load sections", e);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchSections();
+        refreshSections({ withLoading: true });
     }, []);
 
     const handleUpdateSection = async (sectionId, payload) => {
         await api.patch(`/sections/${sectionId}`, payload);
-        const [sectionsRes, metaRes] = await Promise.all([
-            api.get("/sections", { params: { t: Date.now() } }),
-            api.get("/sections/meta", { params: { t: Date.now() } }),
-        ]);
-        const rawSections = Array.isArray(sectionsRes.data) ? sectionsRes.data : [];
-        const normalized = rawSections.map((s) => ({
-            ...s,
-            total: Number(s.regular || 0) + Number(s.irregular || 0),
-        }));
-        setSections(normalized);
-        setIrregularMax(Number(metaRes?.data?.irregularTotal || 0));
+        await refreshSections();
+    };
+
+    const handleDeleteSection = async (sectionId) => {
+        await api.delete(`/sections/${sectionId}`);
+        await refreshSections();
     };
 
     return (
@@ -214,6 +211,17 @@ function SectionList() {
                                         {item}
                                     </label>
                                 ))}
+                                <div className="hidden lg:block h-7 w-px bg-gray-200 mx-1" />
+                                <button
+                                    type="button"
+                                    onClick={() => setDeleteMode((prev) => !prev)}
+                                    className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-all ${deleteMode
+                                        ? "bg-red-600 border-red-600 text-white"
+                                        : "bg-white border-red-200 text-red-600 hover:bg-red-50"
+                                        }`}
+                                >
+                                    Delete Section
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -230,6 +238,8 @@ function SectionList() {
                                     sections={displayedSections}
                                     irregularMax={irregularMax}
                                     onUpdateSection={handleUpdateSection}
+                                    onDeleteSection={handleDeleteSection}
+                                    deleteMode={deleteMode}
                                 />
                             </div>
                         )}

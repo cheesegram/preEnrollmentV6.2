@@ -237,7 +237,7 @@ function Dashboard() {
         window.localStorage.setItem(IMPORT_NOTIFICATION_UNREAD_KEY, "0");
     };
 
-    const isNewStudent = (student) => String(student.year) === "1" && student.status !== "Pending";
+    const isNewStudent = (student) => String(student.year) === "1" && String(student.semester) === "1st" && student.status !== "Pending";
 
     const newStudentsCount = students.filter(isNewStudent).length;
     const enrolledCount = students.filter(s => s.status === "Enrolled").length;
@@ -870,7 +870,7 @@ function Dashboard() {
                     {importNotifications.length ? (
                         <div className="overflow-y-auto rounded-xl border border-gray-200 bg-white">
                             <ul className="divide-y divide-gray-100">
-                                {[...importNotifications].reverse().map((item) => {
+                                {importNotifications.map((item) => {
                                     const when = new Date(item.createdAt);
                                     const timeLabel = Number.isNaN(when.getTime())
                                         ? "Unknown time"

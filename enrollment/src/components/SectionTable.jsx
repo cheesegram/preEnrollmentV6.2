@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/axios';
 
-function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
+function SectionTable({ sections = [], irregularMax = 0, onUpdateSection, onDeleteSection, deleteMode = false }) {
     const [selectedSection, setSelectedSection] = useState(null);
     const [editingIrregular, setEditingIrregular] = useState(null);
     const [irregularValue, setIrregularValue] = useState(0);
@@ -16,6 +16,9 @@ function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
     const [curriculumLoading, setCurriculumLoading] = useState(false);
     const [curriculumError, setCurriculumError] = useState('');
     const [curriculumCache, setCurriculumCache] = useState({});
+    const [sectionToDelete, setSectionToDelete] = useState(null);
+    const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
 
     const normalizeYearKey = (year) => {
         const raw = String(year ?? '').trim().toLowerCase();
@@ -63,6 +66,19 @@ function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
             return 'bg-yellow-100 text-yellow-700 font-bold';
         }
         return 'bg-red-100 text-red-700 font-bold';
+    };
+
+    const getCapacityColorStyle = (actual, capacity) => {
+        const actualNum = Number(actual || 0);
+        const capacityNum = Number(capacity || 0);
+        
+        if (actualNum < capacityNum) {
+            return 'text-green-600 font-semibold';
+        }
+        if (actualNum === capacityNum) {
+            return 'text-yellow-600 font-semibold';
+        }
+        return 'text-red-600 font-semibold';
     };
 
     const openIrregularEditor = (section) => {
@@ -128,6 +144,28 @@ function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
         setCurriculumError('');
     };
 
+    const hasEnrolledStudents = (section) => Number(section?.regular || 0) > 0;
+
+    const handleDeleteRowClick = (section) => {
+        if (!deleteMode || hasEnrolledStudents(section) || !onDeleteSection) return;
+        setDeleteError('');
+        setSectionToDelete(section);
+    };
+
+    const handleConfirmDeleteSection = async () => {
+        if (!sectionToDelete || !onDeleteSection) return;
+        try {
+            setDeleteSubmitting(true);
+            setDeleteError('');
+            await onDeleteSection(sectionToDelete._id);
+            setSectionToDelete(null);
+        } catch (error) {
+            setDeleteError(error?.response?.data?.message || 'Failed to delete section.');
+        } finally {
+            setDeleteSubmitting(false);
+        }
+    };
+
     useEffect(() => {
         const fetchSectionCurriculum = async () => {
             if (!selectedSection) {
@@ -174,6 +212,13 @@ function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedSection]);
 
+    useEffect(() => {
+        if (!deleteMode) {
+            setSectionToDelete(null);
+            setDeleteError('');
+        }
+    }, [deleteMode]);
+
     return (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden font-sans h-full min-h-[380px] flex flex-col w-full">
             <div className="flex-1 min-h-[380px] overflow-y-auto custom-scrollbar">
@@ -194,53 +239,79 @@ function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
 
                     <tbody className="divide-y divide-gray-100">
                         {sections && sections.length > 0 ? (
-                            sections.map((sec) => (
-                                <tr key={`${sec.year}-${sec.section}-${sec.semester ?? 'N/A'}`} className="hover:bg-gray-50/80 transition-colors">
-                                    <td className="px-6 py-4 font-medium text-gray-900">{sec.year}</td>
-                                    <td className="px-6 py-4 text-gray-800 font-medium">{sec.section}</td>
-                                    <td className="px-6 py-4 text-gray-600 text-center">{`${sec.regular}/${sec.regular_capacity}`}</td>
-                                    <td className="px-6 py-4 text-center">
-                                        <button
-                                            type="button"
-                                            onClick={() => openIrregularEditor(sec)}
-                                            className="text-gray-700 hover:text-[#2E522A] underline underline-offset-2"
-                                        >
-                                            {`${sec.irregular}/${sec.irregular_capacity}`}
-                                        </button>
-                                    </td>
-                                    <td className="px-6 py-4 text-gray-900 font-semibold text-center">{sec.total}</td>
-                                    <td className="px-6 py-4 text-center">
-                                        <button
-                                            type="button"
-                                            onClick={() => openCapacityEditor(sec)}
-                                            className="text-gray-700 hover:text-[#2E522A] underline underline-offset-2"
-                                        >
-                                            {sec.total_capacity}
-                                        </button>
-                                    </td>
+                            sections.map((sec) => {
+                                const locked = hasEnrolledStudents(sec);
+                                const deletable = deleteMode && !locked;
 
-                                    {/* Clickable Curriculum Caret */}
-                                    <td className="px-6 py-4 text-center">
-                                        <button
-                                            onClick={() => handleOpenSectionCurriculum(sec)}
-                                            className="text-gray-400 hover:text-[#2E522A] transition-colors p-2 rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#2E522A]/50"
-                                            aria-label="View Curriculum"
-                                            title="View Curriculum"
+                                if (deleteMode && deletable) {
+                                    return (
+                                        <tr
+                                            key={`${sec.year}-${sec.section}-${sec.semester ?? 'N/A'}`}
+                                            onClick={() => handleDeleteRowClick(sec)}
+                                            className="bg-red-50 hover:bg-red-100 cursor-pointer transition-colors"
                                         >
-                                            <i className="fa-solid fa-caret-down text-xl"></i>
-                                        </button>
-                                    </td>
+                                            <td className="px-6 py-4 font-semibold text-red-900">{sec.year}</td>
+                                            <td className="px-6 py-4 font-semibold text-red-900">{sec.section}</td>
+                                            <td colSpan="7" className="px-6 py-4 text-center text-red-700 font-semibold tracking-wide">
+                                                Remove this Section
+                                            </td>
+                                        </tr>
+                                    );
+                                }
 
-                                    <td className="px-6 py-4 text-gray-700 font-medium text-center">{sec.semester ?? 'N/A'}</td>
+                                const rowClass = deleteMode && locked
+                                    ? 'bg-gray-100 opacity-50 cursor-not-allowed pointer-events-none'
+                                    : 'hover:bg-gray-50/80 transition-colors';
 
-                                    {/* Status Pill Badge */}
-                                    <td className="px-6 py-4 text-center">
-                                        <span className={`inline-flex items-center justify-center px-4 py-1.5 rounded-full text-xs tracking-wide w-28 ${getStatusStyle(sec.status)}`}>
-                                            {sec.status}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))
+                                return (
+                                    <tr key={`${sec.year}-${sec.section}-${sec.semester ?? 'N/A'}`} className={rowClass}>
+                                        <td className="px-6 py-4 font-medium text-gray-900">{sec.year}</td>
+                                        <td className="px-6 py-4 text-gray-800 font-medium">{sec.section}</td>
+                                        <td className={`px-6 py-4 text-center ${getCapacityColorStyle(sec.regular, sec.regular_capacity)}`}>{`${sec.regular}/${sec.regular_capacity}`}</td>
+                                        <td className="px-6 py-4 text-center">
+                                            <button
+                                                type="button"
+                                                onClick={() => openIrregularEditor(sec)}
+                                                disabled={deleteMode}
+                                                className={`${getCapacityColorStyle(sec.irregular, sec.irregular_capacity)} hover:text-[#2E522A] underline underline-offset-2 disabled:no-underline disabled:text-gray-400`}
+                                            >
+                                                {`${sec.irregular}/${sec.irregular_capacity}`}
+                                            </button>
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-900 font-semibold text-center">{sec.total}</td>
+                                        <td className="px-6 py-4 text-center">
+                                            <button
+                                                type="button"
+                                                onClick={() => openCapacityEditor(sec)}
+                                                disabled={deleteMode}
+                                                className="text-gray-700 hover:text-[#2E522A] underline underline-offset-2 disabled:no-underline disabled:text-gray-400"
+                                            >
+                                                {sec.total_capacity}
+                                            </button>
+                                        </td>
+
+                                        <td className="px-6 py-4 text-center">
+                                            <button
+                                                onClick={() => handleOpenSectionCurriculum(sec)}
+                                                disabled={deleteMode}
+                                                className="text-gray-400 hover:text-[#2E522A] transition-colors p-2 rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#2E522A]/50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                                                aria-label="View Curriculum"
+                                                title="View Curriculum"
+                                            >
+                                                <i className="fa-solid fa-caret-down text-xl"></i>
+                                            </button>
+                                        </td>
+
+                                        <td className="px-6 py-4 text-gray-700 font-medium text-center">{sec.semester ?? 'N/A'}</td>
+
+                                        <td className="px-6 py-4 text-center">
+                                            <span className={`inline-flex items-center justify-center px-4 py-1.5 rounded-full text-xs tracking-wide w-28 ${getStatusStyle(sec.status)}`}>
+                                                {sec.status}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                );
+                            })
                         ) : (
                             <tr>
                                 <td colSpan="9" className="px-6 py-12 text-center text-gray-500">
@@ -451,6 +522,40 @@ function SectionTable({ sections = [], irregularMax = 0, onUpdateSection }) {
                         <div className="mt-5 flex justify-end gap-2">
                             <button className="px-4 py-2 rounded-lg bg-gray-100" onClick={() => setEditingCapacity(null)} disabled={saving}>Cancel</button>
                             <button className="px-4 py-2 rounded-lg bg-[#2E522A] text-white" onClick={handleSaveCapacity} disabled={saving}>OK</button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {sectionToDelete && createPortal(
+                <div className="fixed inset-0 z-[220] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/35" onClick={() => !deleteSubmitting && setSectionToDelete(null)} />
+                    <div className="relative w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-2xl">
+                        <h4 className="text-lg font-semibold text-gray-900">Delete Section</h4>
+                        <p className="mt-2 text-sm text-gray-700">
+                            Do you wish to Delete this Section: {sectionToDelete.year}{sectionToDelete.section}
+                        </p>
+                        {deleteError && (
+                            <p className="mt-2 text-xs font-semibold text-red-600">{deleteError}</p>
+                        )}
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                className="px-4 py-2 rounded-lg bg-gray-100"
+                                onClick={() => setSectionToDelete(null)}
+                                disabled={deleteSubmitting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="px-4 py-2 rounded-lg bg-red-600 text-white"
+                                onClick={handleConfirmDeleteSection}
+                                disabled={deleteSubmitting}
+                            >
+                                {deleteSubmitting ? 'Deleting...' : 'OK'}
+                            </button>
                         </div>
                     </div>
                 </div>,

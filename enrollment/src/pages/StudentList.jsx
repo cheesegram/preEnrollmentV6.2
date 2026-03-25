@@ -18,6 +18,39 @@ function StudentList() {
     const isSectionActive = selectedSection !== 'All Section';
     const isSemesterActive = selectedSemester !== 'All Sem';
 
+    const availableSections = useMemo(() => {
+        const yearMap = { 'First Year': '1', 'Second Year': '2', 'Third Year': '3', 'Fourth Year': '4' };
+        const semesterMap = { '1st Sem': '1st', '2nd Sem': '2nd' };
+
+        let filtered = students.filter(s => s.status !== 'Pending');
+
+        if (selectedYear !== 'All Year') {
+            const numericYear = yearMap[selectedYear];
+            if (numericYear) filtered = filtered.filter(s => String(s.year) === numericYear);
+        }
+
+        if (selectedSemester !== 'All Sem') {
+            const semesterValue = semesterMap[selectedSemester];
+            if (semesterValue) filtered = filtered.filter(s => String(s.semester) === semesterValue);
+        }
+
+        const uniqueSections = new Set(
+            filtered
+                .map(s => s.section)
+                .filter(section => section && section !== 'Irregular')
+        );
+
+        const sorted = Array.from(uniqueSections).sort((a, b) =>
+            a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+        );
+
+        if (uniqueSections.has('Irregular') || filtered.some(s => s.section === 'Irregular')) {
+            sorted.push('Irregular');
+        }
+
+        return ['All Section', ...sorted];
+    }, [students, selectedYear, selectedSemester]);
+
     const displayedStudents = useMemo(() => {
         let result = students;
         const isPendingView = selected === 'Pending';
@@ -85,6 +118,12 @@ function StudentList() {
 
         return result;
     }, [students, query, selectedYear, selectedSection, selectedSemester, selected]);
+
+    useEffect(() => {
+        if (!availableSections.includes(selectedSection)) {
+            setSelectedSection('All Section');
+        }
+    }, [availableSections, selectedSection]);
 
     useEffect(() => {
         const fetchSections = async () => {
@@ -209,7 +248,7 @@ function StudentList() {
                                                     : 'bg-white border-gray-300 text-gray-700 hover:border-gray-400'
                                                     }`}
                                             >
-                                                {sections.map((section) => (
+                                                {availableSections.map((section) => (
                                                     <option key={section} value={section}>
                                                         {section}
                                                     </option>
